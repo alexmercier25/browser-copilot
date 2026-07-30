@@ -330,10 +330,28 @@ async function navigate(url) {
 // fenêtre par ID -> insensible aux écrans à origine négative et à l'occlusion.
 const HELPER = join(process.env.HOME, 'Applications', 'CC Shot.app');
 
+// Voie rapide : `screencapture -l <windowID>`. Capture par ID de fenêtre, donc
+// insensible aux écrans à origine négative et à l'occlusion, exactement comme
+// le helper. La permission utilisée est celle du process appelant : si le
+// harness l'a déjà, il n'y a rien à installer ni à autoriser.
+async function shotDirect(out) {
+  const { stdout } = await pexec(join(HERE, 'ccwin'), [APP]);
+  const wid = stdout.trim();
+  if (!wid) throw new Error(`aucune fenêtre ${APP}`);
+  await pexec('screencapture', ['-x', '-o', '-l', wid, out]);
+  return { file: out, window: wid, via: 'screencapture' };
+}
+
 async function shot(path) {
   const out = path || `/tmp/cc-shot-${Date.now()}.png`;
   const status = out + '.status';
   await pexec('rm', ['-f', out, status]);
+  try {
+    return await shotDirect(out);
+  } catch {
+    // Le harness n'a pas la permission : on passe par CC Shot, qui possède
+    // la sienne et reste donc indépendant du runtime appelant.
+  }
   await pexec('open', ['-na', HELPER, '--args', '--app', APP, '--out', out]);
   for (let i = 0; i < 48; i++) {
     await sleep(250);

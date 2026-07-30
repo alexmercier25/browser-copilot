@@ -49,7 +49,8 @@ own store, so they all come back.
 To keep the bridge on across restarts, put **`~/Applications/Dia Copilot.app`** in your
 Dock in place of Dia.
 
-Screenshots need the Screen Recording permission granted **to CC Shot** the first time.
+Screenshots use your harness's own Screen Recording permission when it has one, and
+fall back to the CC Shot helper otherwise.
 
 ## Commands
 
@@ -89,18 +90,24 @@ tool you supervise and a tool you hope about.
 
 ## How the screenshots work
 
-`screencapture` is a dead end here. The Screen Recording permission is attributed to the
-process that *invokes* it, meaning every new agent runtime needs its own grant. And
-`-R` can't handle a window on a secondary display with a negative origin.
+Capturing **by window ID** is the whole trick. `screencapture -R x,y,w,h` looks obvious
+and is wrong: it silently fails on a window sitting on a secondary display with a
+negative origin, and it captures whatever is on top rather than the window you asked for.
+By ID, occlusion and display geometry stop mattering.
 
-So `shot` shells out to **CC Shot**, a small Swift + ScreenCaptureKit app (`ccshot.swift`).
-Two things fall out of packaging it as an app launched via `open`:
+`ccwin.swift` resolves the ID. `CGWindowListCopyWindowInfo` returns window numbers, owners
+and bounds **without** the Screen Recording permission (only window *titles* and pixels
+need it), so the lookup is free.
 
-1. The permission belongs to **the helper**, granted once, forever, from any harness.
-2. It captures **by window ID**: immune to negative-origin displays and to occlusion.
-   The browser can be fully behind another window and the capture is still correct.
+`shot` then tries two paths in order:
 
-Because `open` detaches, the result comes back through a `<out>.status` sidecar file.
+1. **`screencapture -o -l <windowID>`** — uses the calling process's permission. If your
+   harness already has Screen Recording, there is nothing to install and nothing to grant.
+2. **CC Shot** (`ccshot.swift`, Swift + ScreenCaptureKit, packaged as an app) — a fallback
+   that owns *its own* permission, so it works from a runtime that has none. Because
+   `open` detaches the process, the result comes back through a `<out>.status` sidecar.
+
+Path 1 covers most setups. Path 2 exists for headless or sandboxed runtimes.
 
 ## Known limits
 
@@ -124,6 +131,11 @@ Because `open` detaches, the result comes back through a `<out>.status` sidecar 
   `_ = NSApplication.shared` before any ScreenCaptureKit call fixes it.
 - **Dia has no `quit` in its scripting dictionary** but still responds to the AppleScript
   `quit` by showing a confirmation dialog. If nobody clicks it, your script just hangs.
+- **The Screen Recording prompt has no "Allow" button.** It only offers "Open System
+  Settings", because you must tick the app yourself in the list. And the app only *shows
+  up* in that list while its process is **alive**. A helper that requests permission and
+  exits a second later leaves the user staring at a list it isn't in. Hence the wait loop
+  in `ccshot.swift`. You can also add the bundle by hand with the list's `+` button.
 - JavaScript travels **base64-encoded** from Node through AppleScript into the browser.
   Quoting and non-ASCII stop being a problem entirely.
 

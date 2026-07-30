@@ -43,8 +43,24 @@ func writePNG(_ image: CGImage, to path: String) -> Bool {
 
 Task {
   do {
+    // Le prompt macOS n'offre pas de bouton « Autoriser » : l'app doit être
+    // cochée à la main dans les Réglages. Or la ligne n'apparaît dans la liste
+    // que tant que le process est VIVANT. Un helper qui demande puis quitte
+    // aussitôt ne laisse rien à cocher. On reste donc en vie et on attend.
     if !CGPreflightScreenCaptureAccess() {
+      writeStatus("WAITING: coche « CC Shot » dans Réglages > Confidentialité > Enregistrement de l'écran")
       CGRequestScreenCaptureAccess()
+      var waited = 0.0
+      while !CGPreflightScreenCaptureAccess() && waited < 180 {
+        try await Task.sleep(nanoseconds: 500_000_000)
+        waited += 0.5
+      }
+      if !CGPreflightScreenCaptureAccess() {
+        writeStatus("ERROR: permission jamais accordee apres 180s")
+        exit(5)
+      }
+      // tccd vient de basculer : laisser ScreenCaptureKit rattraper l'état.
+      try await Task.sleep(nanoseconds: 1_500_000_000)
     }
     let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
 
