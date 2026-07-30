@@ -108,9 +108,11 @@ Because `open` detaches, the result comes back through a `<out>.status` sidecar 
   File pickers, `requestFullscreen`, camera/mic permissions, native drag & drop: not.
 - React's `onMouseEnter` doesn't always fire on a synthetic `mouseover`. Prefer `click`.
 - One tab at a time: the focused one.
-- Rebuilding `ccshot` **invalidates the Screen Recording grant** (it's bound to the
-  binary's cdhash under ad-hoc signing). After a rebuild:
-  `tccutil reset ScreenCapture <bundle-id>`, then re-enable it in System Settings.
+- Under **ad-hoc signing**, rebuilding `ccshot` **silently revokes the Screen Recording
+  grant**: macOS binds it to the binary's cdhash. `install.sh` signs with a Developer ID
+  when it finds one, which binds the grant to the signing identity instead and survives
+  rebuilds. Without one, run `tccutil reset ScreenCapture <bundle-id>` after each
+  rebuild and re-enable it in System Settings.
 
 ## Gotchas found the hard way
 

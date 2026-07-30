@@ -31,8 +31,23 @@ cat > "$SHOT/Contents/Info.plist" <<PLIST
 PLIST
 echo "→ compiling ccshot..."
 swiftc -O "$HERE/ccshot.swift" -o "$SHOT/Contents/MacOS/ccshot"
-codesign --force -s - --identifier "$BUNDLE_ID" "$SHOT"
-echo "✅ $SHOT"
+
+# Sign with a Developer ID if one is available. This matters: macOS binds the
+# Screen Recording grant to the signing identity, so a stable identity survives
+# rebuilds. Ad-hoc signing binds it to the binary's cdhash instead, which means
+# every recompile silently revokes the permission.
+IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null \
+  | grep 'Developer ID Application' | head -1 | sed 's/.*"\(.*\)"/\1/')"
+if [ -n "$IDENTITY" ]; then
+  codesign --force --options runtime -s "$IDENTITY" --identifier "$BUNDLE_ID" "$SHOT"
+  echo "✅ $SHOT (signed: $IDENTITY)"
+  echo "   → the Screen Recording grant will survive future rebuilds"
+else
+  codesign --force -s - --identifier "$BUNDLE_ID" "$SHOT"
+  echo "✅ $SHOT (ad-hoc signed)"
+  echo "   ⚠️  no Developer ID found: every rebuild revokes the Screen Recording"
+  echo "      grant. Re-run 'tccutil reset ScreenCapture $BUNDLE_ID' after each one."
+fi
 
 # --- Browser relaunch app --------------------------------------------------
 BROWSER_APP="${CC_BROWSER_APP:-/Applications/Dia.app}"
