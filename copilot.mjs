@@ -7,8 +7,10 @@
 //
 // Usage : node copilot.mjs <commande> [args]
 //   tabs                       liste les onglets (id + url)
-//   focus <motif>              amène l'onglet au premier plan
-//   nav <url>                  navigue l'onglet actif
+//   attach <motif>             cible un onglet SANS voler le focus (défaut)
+//   focus <motif>              cible ET amène au premier plan
+//   target                     quel onglet est ciblé
+//   nav <url>                  navigue l'onglet ciblé
 //   snap [motif]               inventaire des éléments cliquables (refs)
 //   read [n]                   texte de la page (n premiers caractères)
 //   click <ref>                curseur -> élément -> clic
@@ -25,7 +27,7 @@
 
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -44,10 +46,43 @@ async function osa(lines) {
   return stdout.replace(/\n$/, '');
 }
 
+// --- ciblage de l'onglet ---------------------------------------------------
+// On vise un onglet PAR ID, jamais `active tab of front window`. Deux raisons :
+// l'humain garde son focus et peut continuer à travailler ailleurs, et l'agent
+// ne se fait pas dérouter si l'onglet actif change en cours de route.
+// Le JS s'exécute dans un onglet caché sans problème (layout conservé).
+const TARGET_FILE = '/tmp/cc-target.json';
+
+function loadTarget() {
+  if (process.env.CC_TAB && process.env.CC_WIN) {
+    return { id: process.env.CC_TAB, win: process.env.CC_WIN };
+  }
+  try {
+    return JSON.parse(readFileSync(TARGET_FILE, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function saveTarget(t) {
+  writeFileSync(TARGET_FILE, JSON.stringify(t));
+  return t;
+}
+
+function targetSpec() {
+  const t = loadTarget();
+  if (!t) {
+    throw new Error(
+      'aucun onglet ciblé. Fais `attach <motif>` (sans voler le focus) ou `focus <motif>`.'
+    );
+  }
+  return `tab id "${t.id}" of window id "${t.win}"`;
+}
+
 // --- exécution JS dans l'onglet -------------------------------------------
 // Le JS voyage en base64 : zéro problème de guillemets ou d'accents entre
 // Node -> AppleScript -> Dia -> moteur JS.
-async function runJS(src, target = 'active tab of front window') {
+async function runJS(src, target = targetSpec()) {
   const wrapped = `(function(){${src}\n})()`;
   const b64 = Buffer.from(wrapped, 'utf8').toString('base64');
   const payload =
@@ -291,13 +326,26 @@ async function tabs() {
     });
 }
 
-async function focusTab(match) {
+async function resolveTab(match) {
   const list = await tabs();
   const m = match.toLowerCase();
   const hit =
     list.find((t) => t.url.toLowerCase().includes(m)) ||
     list.find((t) => (t.title || '').toLowerCase().includes(m));
   if (!hit) throw new Error(`aucun onglet ne matche "${match}"`);
+  return hit;
+}
+
+// Cible un onglet SANS le mettre au premier plan : l'humain garde son focus.
+async function attach(match) {
+  const hit = await resolveTab(match);
+  saveTarget(hit);
+  return { ...hit, focus: 'inchangé' };
+}
+
+async function focusTab(match) {
+  const hit = await resolveTab(match);
+  saveTarget(hit);
   await osa([
     `tell application "${APP}"`,
     `activate`,
@@ -305,18 +353,41 @@ async function focusTab(match) {
     `end tell`,
   ]);
   await sleep(350);
-  return hit;
+  return { ...hit, focus: 'volé' };
+}
+
+// Amène la cible devant, exécute, puis rend le focus à l'onglet d'où on vient.
+async function withFocus(fn) {
+  const t = loadTarget();
+  const before = await osa(
+    `tell application "${APP}" to get id of active tab of window id "${t.win}"`
+  ).catch(() => null);
+  const restore = before && before !== t.id;
+  if (restore) {
+    await osa(`tell application "${APP}" to focus (first tab of windows whose id is "${t.id}")`);
+    await sleep(400);
+  }
+  try {
+    return await fn();
+  } finally {
+    if (restore) {
+      await osa(
+        `tell application "${APP}" to focus (first tab of windows whose id is "${before}")`
+      );
+    }
+  }
 }
 
 async function navigate(url) {
+  const t = loadTarget();
+  if (!t) throw new Error('aucun onglet ciblé - fais `attach <motif>` d\'abord');
   await osa(
-    `tell application "${APP}" to set URL of active tab of front window to "${url}"`
+    `tell application "${APP}" to set URL of tab id "${t.id}" of window id "${t.win}" to "${url}"`
   );
-  // attendre la fin du chargement
   for (let i = 0; i < 60; i++) {
     await sleep(300);
     const loading = await osa(
-      `tell application "${APP}" to get loading of active tab of front window`
+      `tell application "${APP}" to get loading of tab id "${t.id}" of window id "${t.win}"`
     );
     if (loading === 'false') break;
   }
@@ -421,8 +492,14 @@ try {
     case 'tabs':
       p(await tabs());
       break;
+    case 'attach':
+      p(await attach(rest.join(' ')));
+      break;
     case 'focus':
       p(await focusTab(rest.join(' ')));
+      break;
+    case 'target':
+      p(loadTarget() || 'aucun onglet ciblé');
       break;
     case 'nav':
       p(await navigate(rest[0]));
@@ -480,8 +557,10 @@ try {
     case 'eval':
       p(await runJS(rest.join(' ')));
       break;
+    // Un onglet caché n'est pas rendu : toute capture exige que la cible soit
+    // devant. On l'amène, on capture, et on rend le focus d'où il venait.
     case 'shot':
-      p(await shot(rest[0]));
+      p(await withFocus(() => shot(rest[0])));
       break;
     case 'marks':
       p(await marks(rest[0] !== 'off'));
@@ -489,10 +568,13 @@ try {
     case 'look': {
       // snap + badges + screenshot en un coup : la carte cliquable complète
       const s = await snapshot();
-      await marks(true);
-      await sleep(150);
-      const f = await shot(rest[0]);
-      await marks(false);
+      const f = await withFocus(async () => {
+        await marks(true);
+        await sleep(150);
+        const r = await shot(rest[0]);
+        await marks(false);
+        return r;
+      });
       p({ file: f.file, url: s.url, title: s.title, count: s.count, els: s.els });
       break;
     }

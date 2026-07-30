@@ -6,10 +6,13 @@ sessions, with a **visible cursor** so you can watch what it does.
 No separate profile. No second browser. No re-authentication. No extension.
 
 ```bash
-node copilot.mjs focus stripe     # grabs your already-authenticated Stripe tab
+node copilot.mjs attach stripe    # targets your already-authenticated Stripe tab
 node copilot.mjs look page.png    # screenshot + numbered badges on every clickable element
 node copilot.mjs click 17         # cursor glides there, highlights it, clicks
 ```
+
+`attach` targets a tab **by ID**, so the agent drives it in the background while you keep
+working in another tab. Your focus is never stolen.
 
 ## Why this exists
 
@@ -56,8 +59,10 @@ fall back to the CC Shot helper otherwise.
 
 ```bash
 node copilot.mjs tabs                  # every open tab
-node copilot.mjs focus stripe          # bring a tab to the front (url or title match)
-node copilot.mjs nav https://...       # navigate the active tab
+node copilot.mjs attach stripe         # target a tab, focus untouched (url or title match)
+node copilot.mjs focus stripe          # target it AND bring it to the front
+node copilot.mjs target                # which tab is currently targeted
+node copilot.mjs nav https://...       # navigate the targeted tab
 node copilot.mjs snap                  # inventory of clickable elements -> refs
 node copilot.mjs snap invoice          # filtered inventory
 node copilot.mjs read 4000             # page text
@@ -72,9 +77,12 @@ node copilot.mjs shot out.png
 node copilot.mjs eval 'return document.title'
 ```
 
-Agent loop: `look` → read the annotated screenshot → `click <ref>` → `look` to verify.
-The number drawn on the image **is** the ref you pass to `click`. Refs are invalidated by
+Agent loop: `attach` → `snap` → `click <ref>` → `snap` to verify. Refs are invalidated by
 a re-render, so `snap` again after every action.
+
+Reach for `look` when the agent genuinely needs to *see* the page: the number drawn on
+the image **is** the ref you pass to `click`. It costs a focus switch (see below), so
+prefer `read` and `eval` when text is enough.
 
 ## The visible cursor
 
@@ -114,7 +122,10 @@ Path 1 covers most setups. Path 2 exists for headless or sandboxed runtimes.
 - Events are **synthetic** (`isTrusted: false`). Clicks, links, forms, React: covered.
   File pickers, `requestFullscreen`, camera/mic permissions, native drag & drop: not.
 - React's `onMouseEnter` doesn't always fire on a synthetic `mouseover`. Prefer `click`.
-- One tab at a time: the focused one.
+- One targeted tab at a time.
+- **`look` and `shot` briefly steal focus.** A hidden tab isn't rendered, so there are no
+  pixels to capture. Both bring the target forward, capture, and hand focus back to the
+  tab you were on. Everything else runs fully in the background.
 - Under **ad-hoc signing**, rebuilding `ccshot` **silently revokes the Screen Recording
   grant**: macOS binds it to the binary's cdhash. `install.sh` signs with a Developer ID
   when it finds one, which binds the grant to the signing identity instead and survives
@@ -138,6 +149,11 @@ Path 1 covers most setups. Path 2 exists for headless or sandboxed runtimes.
   in `ccshot.swift`. You can also add the bundle by hand with the list's `+` button.
 - JavaScript travels **base64-encoded** from Node through AppleScript into the browser.
   Quoting and non-ASCII stop being a problem entirely.
+- **Never drive `active tab of front window`.** It looks like the obvious target and it
+  costs you the whole point: the human can't use their browser while the agent works, and
+  worse, the agent silently retargets whenever focus drifts mid-task. Addressing a tab by
+  ID fixes both. JS runs fine in a hidden tab: `document.hidden` is true but layout is
+  intact, so `getBoundingClientRect` and clicks behave normally.
 
 ## Security
 
