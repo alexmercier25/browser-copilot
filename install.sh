@@ -7,6 +7,13 @@ APPS="$HOME/Applications"
 BUNDLE_ID="${CC_BUNDLE_ID:-dev.browsercopilot.ccshot}"
 mkdir -p "$APPS"
 
+# --- ccwin : window ID lookup ----------------------------------------------
+# CGWindowListCopyWindowInfo needs no Screen Recording permission for IDs and
+# bounds, so this stays a plain binary. It feeds `screencapture -l`.
+echo "→ compiling ccwin..."
+swiftc -O "$HERE/ccwin.swift" -o "$HERE/ccwin"
+echo "✅ $HERE/ccwin"
+
 # --- CC Shot : ScreenCaptureKit helper ------------------------------------
 # Packaged as an app so macOS attributes the Screen Recording permission to
 # the helper itself, not to whatever terminal or agent runtime invoked it.
