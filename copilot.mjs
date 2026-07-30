@@ -19,7 +19,7 @@
 //   move <x> <y>               bouge juste le curseur
 //   say <texte>                change l'étiquette du curseur
 //   eval <js>                  JS arbitraire dans l'onglet actif
-//   shot [chemin]              capture de la fenêtre (helper CC Shot)
+//   shot [chemin]              capture de la fenêtre (par ID, pas par région)
 //   marks [off]                badges numérotés sur les refs du dernier snap
 //   look [chemin]              snap + badges + screenshot : la carte cliquable
 
