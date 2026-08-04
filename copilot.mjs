@@ -102,14 +102,37 @@ async function runJS(src, target = targetSpec()) {
     }
   } catch (e) {
     const msg = String(e.stderr || e.message);
-    if (msg.includes('--enable-applescript-javascript')) {
+    const noFlag = msg.includes('--enable-applescript-javascript');
+    const notRunning = /isn.t running|n.est pas en cours|-600/.test(msg);
+    if ((noFlag || notRunning) && !runJS.retried) {
+      runJS.retried = true;
+      // Si le navigateur est fermé, on peut le lancer flaggé sans rien demander
+      // à personne. S'il tourne déjà sans le flag, seul un redémarrage règle ça
+      // et ça ferme la fenêtre de travail : c'est à l'humain de décider.
+      if (!(await isRunning())) {
+        await pexec('bash', [join(HERE, 'relaunch.sh')], {
+          env: { ...process.env, CC_QUIET: '1' },
+        }).catch(() => {});
+        return runJS(src, target);
+      }
       console.error(
-        `\n${APP} tourne sans le flag requis.\n` +
-          `Relance-le :  ${join(HERE, 'relaunch.sh')}\n`
+        `\n${APP} tourne sans le flag requis (${'--enable-applescript-javascript'}).\n` +
+          `Relance-le :  ${join(HERE, 'relaunch.sh')}\n` +
+          `Pour ne plus jamais avoir à le faire : mets « ${APP} Copilot » dans le Dock\n` +
+          `à la place de ${APP}, il lance toujours avec le flag.\n`
       );
       process.exit(2);
     }
     throw e;
+  }
+}
+
+async function isRunning() {
+  try {
+    await pexec('pgrep', ['-x', APP]);
+    return true;
+  } catch {
+    return false;
   }
 }
 

@@ -46,8 +46,19 @@ cd browser-copilot
 ./relaunch.sh         # restarts Dia with --enable-applescript-javascript
 ```
 
-Dia asks for confirmation when quitting: click **Quit**. Its tabs are persisted in its
-own store, so they all come back.
+Dia asks for confirmation when quitting: click **Quit**. Its *pinned* tabs are persisted
+in its own store and come back; unpinned ones do not.
+
+`relaunch.sh` is designed to replace the Dia icon in your Dock, so the normal path has no
+friction at all: it launches Dia with the flag if Dia is closed, and just activates it if
+Dia is already running correctly. Only a Dia already running *without* the flag needs a
+restart.
+
+**It never restarts the browser on a failed probe.** A probe can fail for reasons that
+have nothing to do with the flag (`active tab` returns `missing value` the moment the
+browser isn't frontmost), and closing someone's browser on a false negative costs them
+their unpinned tabs. The restart branch requires the error text to actually name the
+missing flag.
 
 To keep the bridge on across restarts, put **`~/Applications/Dia Copilot.app`** in your
 Dock in place of Dia.
