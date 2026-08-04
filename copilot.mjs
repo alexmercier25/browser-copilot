@@ -359,11 +359,74 @@ async function resolveTab(match) {
   return hit;
 }
 
+// Un onglet restauré après un redémarrage du navigateur n'a AUCUN moteur JS
+// tant qu'il n'a pas été affiché une fois : Dia les restaure en différé.
+// `execute` y renvoie alors une chaîne vide, pas une erreur.
+async function isAlive() {
+  const r = await runJS('return "A";').catch(() => null);
+  return r === 'A';
+}
+
+// Réveille la cible : c'est le SEUL moyen connu de matérialiser le moteur JS
+// d'un onglet inerte. Coûte un aller-retour de focus, une fois par onglet et
+// par session du navigateur. Le focus est ensuite rendu, et vérifié.
+async function wake() {
+  if (await isAlive()) return { woke: false };
+  const t = loadTarget();
+  const before = await osa(
+    `tell application "${APP}" to get id of active tab of window id "${t.win}"`
+  ).catch(() => null);
+  await setActive(t.id);
+  let alive = false;
+  for (let i = 0; i < 40; i++) {
+    await sleep(300);
+    if (await isAlive()) {
+      alive = true;
+      break;
+    }
+  }
+  // Un moteur JS vivant ne veut pas dire une page utilisable : une SPA lourde
+  // met plusieurs secondes à monter. Si on rend le focus trop tôt, l'onglet
+  // repasse en arrière-plan à moitié construit et `snap` sort 0 élément.
+  // On garde donc le focus jusqu'à ce qu'il y ait vraiment quelque chose.
+  let ready = false;
+  if (alive) {
+    for (let i = 0; i < 40; i++) {
+      const n = await runJS(
+        'return String(document.querySelectorAll("a,button,input,[role=button]").length);'
+      ).catch(() => '0');
+      if (Number(n) > 3) {
+        ready = true;
+        break;
+      }
+      await sleep(400);
+    }
+  }
+  if (before && before !== t.id) await setActive(before);
+  if (!alive) throw new Error("l'onglet ciblé ne répond pas même après réveil");
+  return { woke: true, ready, focusRendu: before || null };
+}
+
+// `first tab of WINDOWS whose id is X` : le pluriel est obligatoire.
+// `first tab of window 1 whose id is X` est accepté mais ne fait rien.
+async function setActive(tabId) {
+  await osa(`tell application "${APP}" to focus (first tab of windows whose id is "${tabId}")`);
+  for (let i = 0; i < 20; i++) {
+    await sleep(150);
+    const now = await osa(
+      `tell application "${APP}" to get id of active tab of window 1`
+    ).catch(() => null);
+    if (now === tabId) return true;
+  }
+  return false;
+}
+
 // Cible un onglet SANS le mettre au premier plan : l'humain garde son focus.
 async function attach(match) {
   const hit = await resolveTab(match);
   saveTarget(hit);
-  return { ...hit, focus: 'inchangé' };
+  const w = await wake();
+  return { ...hit, focus: w.woke ? 'emprunté puis rendu (onglet endormi)' : 'inchangé' };
 }
 
 async function focusTab(match) {
@@ -386,18 +449,12 @@ async function withFocus(fn) {
     `tell application "${APP}" to get id of active tab of window id "${t.win}"`
   ).catch(() => null);
   const restore = before && before !== t.id;
-  if (restore) {
-    await osa(`tell application "${APP}" to focus (first tab of windows whose id is "${t.id}")`);
-    await sleep(400);
-  }
+  if (restore) await setActive(t.id);
+  await sleep(250);
   try {
     return await fn();
   } finally {
-    if (restore) {
-      await osa(
-        `tell application "${APP}" to focus (first tab of windows whose id is "${before}")`
-      );
-    }
+    if (restore) await setActive(before);
   }
 }
 

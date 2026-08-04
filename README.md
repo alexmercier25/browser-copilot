@@ -134,6 +134,11 @@ Path 1 covers most setups. Path 2 exists for headless or sandboxed runtimes.
   File pickers, `requestFullscreen`, camera/mic permissions, native drag & drop: not.
 - React's `onMouseEnter` doesn't always fire on a synthetic `mouseover`. Prefer `click`.
 - One targeted tab at a time.
+- **A tab restored after a browser restart has no JS engine at all** until it has been
+  displayed once: the browser restores tabs lazily, and `execute` returns an empty string
+  rather than an error. `attach` detects this and wakes the tab by briefly focusing it,
+  waits for the page to actually mount, then hands your focus back. Costs one focus
+  round-trip per tab per browser session; every call after that is fully background.
 - **`look` and `shot` briefly steal focus.** A hidden tab isn't rendered, so there are no
   pixels to capture. Both bring the target forward, capture, and hand focus back to the
   tab you were on. Everything else runs fully in the background.
